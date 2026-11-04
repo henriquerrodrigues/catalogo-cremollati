@@ -1,17 +1,25 @@
 import { ComponentFixture, TestBed } from '@angular/core/testing';
+import { of } from 'rxjs';
 
-import { Catalogo } from './catalogo';
+import { CatalogoComponent } from './catalogo';
+import { CatalogoService } from '../../services/catalogo.service';
 
-describe('Catalogo', () => {
-  let component: Catalogo;
-  let fixture: ComponentFixture<Catalogo>;
+describe('CatalogoComponent', () => {
+  let component: CatalogoComponent;
+  let fixture: ComponentFixture<CatalogoComponent>;
 
   beforeEach(async () => {
     await TestBed.configureTestingModule({
-      imports: [Catalogo],
+      imports: [CatalogoComponent],
+      providers: [
+        {
+          provide: CatalogoService,
+          useValue: { listarProdutos: () => of([]) }
+        }
+      ]
     }).compileComponents();
 
-    fixture = TestBed.createComponent(Catalogo);
+    fixture = TestBed.createComponent(CatalogoComponent);
     component = fixture.componentInstance;
     await fixture.whenStable();
   });
