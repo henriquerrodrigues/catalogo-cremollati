@@ -1,8 +1,10 @@
 import { Component, HostListener, inject, OnInit } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
+import { ActivatedRoute, Router } from '@angular/router';
 import { CatalogoService } from '../../services/catalogo.service';
-import { ProdutoCatalogo } from '../../models/produto';
+import { ErroCatalogo, ProdutoCarrinho } from '../../models/catalogo';
+import { dividirReserva } from '../../utils/reserva';
 
 type Ordem = 'nome' | 'menor' | 'maior' | 'selecionados';
 
@@ -12,6 +14,8 @@ const IMG_PLACEHOLDER =
     '<svg xmlns="http://www.w3.org/2000/svg" width="200" height="200"><rect width="200" height="200" fill="#E8EEF3"/><text x="50%" y="58%" font-size="64" text-anchor="middle">🍦</text></svg>'
   );
 
+const QUANTIDADE_MAXIMA = 9999;
+
 @Component({
   selector: 'app-catalogo',
   standalone: true,
@@ -19,80 +23,83 @@ const IMG_PLACEHOLDER =
   templateUrl: './catalogo.html'
 })
 export class CatalogoComponent implements OnInit {
+  private readonly service = inject(CatalogoService);
+  private readonly router = inject(Router);
+  private readonly token = inject(ActivatedRoute).snapshot.paramMap.get('token') ?? '';
 
-  produtos: ProdutoCatalogo[] = [];
+  produtos: ProdutoCarrinho[] = [];
+  clienteNome = '';
+  distribuidoraNome = '';
+  pedidoMinimo = 0;
   carregando = false;
+  enviando = false;
   erroCarregamento = '';
-  readonly imagemProduto = IMG_PLACEHOLDER;
+  errosItens: Record<number, string> = {};
+  readonly placeholder = IMG_PLACEHOLDER;
 
-  // Busca, ordenação e filtro por categoria
-  termoBusca: string = '';
+  termoBusca = '';
   ordem: Ordem = 'nome';
-  categoriaAtiva: string = 'Todos';
-
-  // Estado da interface
+  categoriaAtiva = 'Todos';
   carrinhoAberto = false;
   aviso = '';
-
-  /** Valor mínimo do pedido em R$. Use 0 para desativar a regra. */
-  pedidoMinimo = 300;
-
-  private readonly STORAGE_KEY = 'catalogo-sorvetes-atacado:pedido';
   private avisoTimer?: ReturnType<typeof setTimeout>;
 
-  private readonly catalogoService = inject(CatalogoService);
-
-  ngOnInit(): void {
-    this.carregarProdutos();
+  private get storageKey(): string {
+    return `catalogo:pedido:${this.token.slice(0, 12)}`;
   }
 
-  carregarProdutos(): void {
+  ngOnInit(): void {
+    if (!this.token) {
+      this.router.navigate(['/link-invalido']);
+      return;
+    }
+    this.carregar();
+  }
+
+  carregar(): void {
     this.carregando = true;
     this.erroCarregamento = '';
-
-    this.catalogoService.listarProdutos().subscribe({
-      next: produtos => {
-        this.produtos = produtos;
-        this.restaurarPedido();
+    this.service.carregar(this.token).subscribe({
+      next: r => {
+        this.clienteNome = r.cliente.nome;
+        this.distribuidoraNome = r.distribuidora.nome;
+        this.pedidoMinimo = r.pedidoMinimo;
+        this.produtos = r.itens.map(i => ({ ...i, quantidade: 0 }));
+        if (r.carrinho.length > 0) {
+          this.aplicarCarrinho(r.carrinho.map(i => ({ id: i.id, q: i.quantidade })), true);
+          this.salvarPedido();
+        } else {
+          this.restaurarPedido();
+        }
         this.carregando = false;
       },
-      error: erro => {
-        console.error('Erro ao carregar produtos do catálogo.', erro);
-        this.erroCarregamento = 'Não foi possível carregar o catálogo. Tente novamente.';
+      error: (e: ErroCatalogo) => {
         this.carregando = false;
+        this.tratarErro(e, true);
       }
     });
   }
 
-  // ---------- Controle de quantidade ----------
-  incrementar(produto: ProdutoCatalogo): void {
-    produto.quantidade = (produto.quantidade || 0) + 1;
-    this.salvarPedido();
+  // ---------- Quantidade ----------
+  incrementar(p: ProdutoCarrinho): void {
+    this.definirQuantidade(p, (p.quantidade || 0) + 1);
   }
 
-  decrementar(produto: ProdutoCatalogo): void {
-    if (produto.quantidade > 0) {
-      produto.quantidade--;
-    }
-    this.salvarPedido();
-    if (this.carrinhoAberto && this.totalItensCarrinho === 0) {
-      this.fecharCarrinho();
-    }
+  decrementar(p: ProdutoCarrinho): void {
+    this.definirQuantidade(p, Math.max(0, p.quantidade - 1));
+    if (this.carrinhoAberto && this.totalItensCarrinho === 0) this.fecharCarrinho();
   }
 
-  /** Chamado pelo campo numérico: aceita só inteiros >= 0 */
-  definirQuantidade(produto: ProdutoCatalogo, valor: unknown): void {
+  definirQuantidade(p: ProdutoCarrinho, valor: unknown): void {
     const n = Math.floor(Number(valor));
-    produto.quantidade = Number.isFinite(n) && n > 0 ? n : 0;
+    p.quantidade = Number.isFinite(n) && n > 0 ? Math.min(n, QUANTIDADE_MAXIMA) : 0;
+    delete this.errosItens[p.id];
     this.salvarPedido();
   }
 
-  remover(produto: ProdutoCatalogo): void {
-    produto.quantidade = 0;
-    this.salvarPedido();
-    if (this.totalItensCarrinho === 0) {
-      this.fecharCarrinho();
-    }
+  remover(p: ProdutoCarrinho): void {
+    this.definirQuantidade(p, 0);
+    if (this.totalItensCarrinho === 0) this.fecharCarrinho();
   }
 
   limparCarrinho(): void {
@@ -102,63 +109,67 @@ export class CatalogoComponent implements OnInit {
     this.mostrarAviso('Pedido esvaziado');
   }
 
-  // ---------- Listagem: busca, categoria e ordenação ----------
+  divisao(p: ProdutoCarrinho): { agora: number; reserva: number } {
+    return dividirReserva(p.quantidade, p.saldo);
+  }
+
+  get temReserva(): boolean {
+    return this.itensCarrinho.some(p => this.divisao(p).reserva > 0);
+  }
+
+  // ---------- Listagem ----------
   get categorias(): string[] {
-    const unicas = new Set(
-      this.produtos.map(p => p.PRO_CATEGORIA_NOME).filter(c => !!c)
-    );
+    const unicas = new Set(this.produtos.map(p => p.categoria).filter(c => !!c));
     return ['Todos', ...Array.from(unicas).sort((a, b) => a.localeCompare(b, 'pt-BR'))];
   }
 
-  get produtosFiltrados(): ProdutoCatalogo[] {
+  get produtosFiltrados(): ProdutoCarrinho[] {
     const termo = this.normalizar(this.termoBusca);
-
     const lista = this.produtos.filter(p => {
-      const bateCategoria = this.categoriaAtiva === 'Todos' || p.PRO_CATEGORIA_NOME === this.categoriaAtiva;
-      const texto = this.normalizar(
-        `${p.PRO_NOME} ${p.PRO_DESCRICAO_CURTA} ${p.PRO_UNIDADE} ${p.PRO_CATEGORIA_NOME}`
-      );
+      const bateCategoria = this.categoriaAtiva === 'Todos' || p.categoria === this.categoriaAtiva;
+      const texto = this.normalizar(`${p.nome} ${p.sku} ${p.unidade} ${p.categoria}`);
       return bateCategoria && (!termo || texto.includes(termo));
     });
-
     switch (this.ordem) {
       case 'menor':
-        return [...lista].sort((a, b) => a.PRO_PRECO - b.PRO_PRECO);
+        return [...lista].sort((a, b) => a.preco - b.preco);
       case 'maior':
-        return [...lista].sort((a, b) => b.PRO_PRECO - a.PRO_PRECO);
+        return [...lista].sort((a, b) => b.preco - a.preco);
       case 'selecionados':
         return [...lista].sort(
-          (a, b) =>
-            (b.quantidade > 0 ? 1 : 0) - (a.quantidade > 0 ? 1 : 0) ||
-            a.PRO_NOME.localeCompare(b.PRO_NOME, 'pt-BR')
+          (a, b) => (b.quantidade > 0 ? 1 : 0) - (a.quantidade > 0 ? 1 : 0) || a.nome.localeCompare(b.nome, 'pt-BR')
         );
       default:
-        return [...lista].sort((a, b) => a.PRO_NOME.localeCompare(b.PRO_NOME, 'pt-BR'));
+        return [...lista].sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR'));
     }
   }
 
-  trackById = (_: number, p: ProdutoCatalogo) => p.PRO_CODIGO;
+  trackById = (_: number, p: ProdutoCarrinho) => p.id;
 
   limparFiltros(): void {
     this.termoBusca = '';
     this.categoriaAtiva = 'Todos';
   }
 
+  imagem(p: ProdutoCarrinho): string {
+    return p.imagem || this.placeholder;
+  }
+
   aoErrarImagem(ev: Event): void {
     (ev.target as HTMLImageElement).src = IMG_PLACEHOLDER;
   }
 
-  // ---------- Cálculos do Carrinho B2B ----------
-  get itensCarrinho(): ProdutoCatalogo[] {
+  // ---------- Carrinho ----------
+  get itensCarrinho(): ProdutoCarrinho[] {
     return this.produtos.filter(p => p.quantidade > 0);
   }
 
   get totalItensCarrinho(): number {
-    return this.produtos.reduce((acc, curr) => acc + curr.quantidade, 0);
+    return this.produtos.reduce((acc, p) => acc + p.quantidade, 0);
   }
 
   get valorTotalCarrinho(): number {
-    return this.produtos.reduce((acc, curr) => acc + (curr.quantidade * curr.PRO_PRECO), 0);
+    return this.produtos.reduce((acc, p) => acc + p.quantidade * p.preco, 0);
   }
 
   get faltaParaMinimo(): number {
@@ -166,20 +177,15 @@ export class CatalogoComponent implements OnInit {
   }
 
   get progressoMinimo(): number {
-    return this.pedidoMinimo
-      ? Math.min(100, (this.valorTotalCarrinho / this.pedidoMinimo) * 100)
-      : 100;
+    return this.pedidoMinimo ? Math.min(100, (this.valorTotalCarrinho / this.pedidoMinimo) * 100) : 100;
   }
 
   get podeFinalizar(): boolean {
-    return this.totalItensCarrinho > 0 && this.faltaParaMinimo === 0;
+    return this.totalItensCarrinho > 0 && this.faltaParaMinimo === 0 && !this.enviando;
   }
 
-  // ---------- Painel do pedido ----------
   abrirCarrinho(): void {
-    if (this.totalItensCarrinho > 0) {
-      this.carrinhoAberto = true;
-    }
+    if (this.totalItensCarrinho > 0) this.carrinhoAberto = true;
   }
 
   fecharCarrinho(): void {
@@ -191,45 +197,51 @@ export class CatalogoComponent implements OnInit {
     this.fecharCarrinho();
   }
 
-  finalizarPedidoB2B(): void {
-    const itensSelecionados = this.itensCarrinho;
-
-    if (itensSelecionados.length === 0) {
-      this.mostrarAviso('Adicione pelo menos um produto para continuar.');
-      return;
-    }
-
-    if (!this.podeFinalizar) {
-      this.mostrarAviso('O pedido ainda não atingiu o valor mínimo.');
-      return;
-    }
-
-    const payloadPedido = {
-      clienteId: 'CLIENTE_B2B_EXEMPLO',
-      dataPedido: new Date(),
-      itens: itensSelecionados.map(p => ({
-        produtoId: p.PRO_CODIGO,
-        nome: p.PRO_NOME,
-        quantidade: p.quantidade,
-        precoUnitario: p.PRO_PRECO
-      })),
-      valorTotal: this.valorTotalCarrinho
-    };
-
-    console.log('📦 Payload do Pedido B2B gerado:', payloadPedido);
-
-    const totalEnviado = this.totalItensCarrinho;
-    this.produtos.forEach(p => (p.quantidade = 0));
-    this.salvarPedido();
-    this.fecharCarrinho();
-    this.mostrarAviso(`Pedido de ${totalEnviado} itens enviado para processamento.`);
+  enviar(): void {
+    if (!this.podeFinalizar) return;
+    this.enviando = true;
+    this.errosItens = {};
+    const itens = this.itensCarrinho.map(p => ({ id: p.id, quantidade: p.quantidade }));
+    this.service.enviarPedido(this.token, itens).subscribe({
+      next: () => {
+        try {
+          localStorage.removeItem(this.storageKey);
+        } catch {
+          /* storage indisponível */
+        }
+        this.router.navigate(['/c', this.token, 'enviado']);
+      },
+      error: (e: ErroCatalogo) => {
+        this.enviando = false;
+        this.tratarErro(e, false);
+      }
+    });
   }
 
-  // ---------- Persistência do pedido em andamento ----------
+  // ---------- Erros ----------
+  private tratarErro(e: ErroCatalogo, aoCarregar: boolean): void {
+    switch (e.tipo) {
+      case 'link-invalido':
+        this.router.navigate(['/link-invalido']);
+        return;
+      case 'indisponivel':
+        this.erroCarregamento = `${e.mensagem} Fale com a gente pelo WhatsApp.`;
+        return;
+      case 'itens':
+        e.itens.filter(i => i.id).forEach(i => (this.errosItens[i.id] = i.erro));
+        this.mostrarAviso(e.mensagem);
+        return;
+      default:
+        if (aoCarregar) this.erroCarregamento = 'Não foi possível carregar o catálogo. Tente novamente.';
+        else this.mostrarAviso('Sem conexão. Seu carrinho foi mantido; tente enviar de novo.');
+    }
+  }
+
+  // ---------- Persistência ----------
   private salvarPedido(): void {
     try {
-      const dados = this.itensCarrinho.map(p => ({ id: p.PRO_CODIGO, q: p.quantidade }));
-      localStorage.setItem(this.STORAGE_KEY, JSON.stringify(dados));
+      const dados = this.itensCarrinho.map(p => ({ id: p.id, q: p.quantidade }));
+      localStorage.setItem(this.storageKey, JSON.stringify(dados));
     } catch {
       /* storage indisponível: o pedido só não persiste */
     }
@@ -237,30 +249,32 @@ export class CatalogoComponent implements OnInit {
 
   private restaurarPedido(): void {
     try {
-      const bruto = localStorage.getItem(this.STORAGE_KEY);
-      if (!bruto) return;
-      const salvos: { id: number; q: number }[] = JSON.parse(bruto);
-      salvos.forEach(s => {
-        const produto = this.produtos.find(p => p.PRO_CODIGO === s.id);
-        if (produto) produto.quantidade = s.q;
-      });
+      const bruto = localStorage.getItem(this.storageKey);
+      if (bruto) this.aplicarCarrinho(JSON.parse(bruto), false);
     } catch {
       /* dado inválido: ignora */
     }
   }
 
-  // ---------- Utilitários ----------
+  private aplicarCarrinho(itens: { id: number; q: number }[], avisarFaltantes: boolean): void {
+    let faltaram = 0;
+    itens.forEach(s => {
+      const p = this.produtos.find(x => x.id === s.id);
+      if (p) p.quantidade = Math.min(Math.max(0, Math.floor(s.q)), QUANTIDADE_MAXIMA);
+      else faltaram++;
+    });
+    if (avisarFaltantes && faltaram > 0) {
+      this.mostrarAviso(`${faltaram} item(ns) do pedido anterior não estão mais disponíveis.`);
+    }
+  }
+
   private mostrarAviso(msg: string): void {
     this.aviso = msg;
     clearTimeout(this.avisoTimer);
-    this.avisoTimer = setTimeout(() => (this.aviso = ''), 3000);
+    this.avisoTimer = setTimeout(() => (this.aviso = ''), 4000);
   }
 
   private normalizar(texto: string): string {
-    return texto
-      .normalize('NFD')
-      .replace(/[\u0300-\u036f]/g, '')
-      .toLowerCase()
-      .trim();
+    return (texto || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().trim();
   }
 }
