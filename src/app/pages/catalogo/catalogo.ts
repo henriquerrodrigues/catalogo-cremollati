@@ -34,6 +34,7 @@ export class CatalogoComponent implements OnInit {
   carregando = false;
   enviando = false;
   erroCarregamento = '';
+  erroEnvio = '';
   errosItens: Record<number, string> = {};
   readonly placeholder = IMG_PLACEHOLDER;
 
@@ -94,6 +95,7 @@ export class CatalogoComponent implements OnInit {
     const n = Math.floor(Number(valor));
     p.quantidade = Number.isFinite(n) && n > 0 ? Math.min(n, QUANTIDADE_MAXIMA) : 0;
     delete this.errosItens[p.id];
+    this.erroEnvio = '';
     this.salvarPedido();
   }
 
@@ -201,6 +203,7 @@ export class CatalogoComponent implements OnInit {
     if (!this.podeFinalizar) return;
     this.enviando = true;
     this.errosItens = {};
+    this.erroEnvio = '';
     const itens = this.itensCarrinho.map(p => ({ id: p.id, quantidade: p.quantidade }));
     this.service.enviarPedido(this.token, itens).subscribe({
       next: () => {
@@ -225,15 +228,20 @@ export class CatalogoComponent implements OnInit {
         this.router.navigate(['/link-invalido']);
         return;
       case 'indisponivel':
-        this.erroCarregamento = `${e.mensagem} Fale com a gente pelo WhatsApp.`;
+        if (aoCarregar) this.erroCarregamento = `${e.mensagem} Fale com a gente pelo WhatsApp.`;
+        else this.erroEnvio = `${e.mensagem} Fale com a gente pelo WhatsApp.`;
         return;
       case 'itens':
         e.itens.filter(i => i.id).forEach(i => (this.errosItens[i.id] = i.erro));
+        this.erroEnvio = e.mensagem;
         this.mostrarAviso(e.mensagem);
         return;
       default:
         if (aoCarregar) this.erroCarregamento = 'Não foi possível carregar o catálogo. Tente novamente.';
-        else this.mostrarAviso('Sem conexão. Seu carrinho foi mantido; tente enviar de novo.');
+        else {
+          this.erroEnvio = 'Sem conexão. Seu carrinho foi mantido; tente enviar de novo.';
+          this.mostrarAviso(this.erroEnvio);
+        }
     }
   }
 

@@ -50,6 +50,12 @@ describe('CatalogoService', () => {
     expect(await falha).toEqual({ tipo: 'itens', mensagem: 'pedido sem itens', itens: [{ id: 0, erro: 'pedido sem itens' }] });
   });
 
+  it('413 vira itens', async () => {
+    const p = firstValueFrom(service.enviarPedido('tok', [{ id: 1, quantidade: 1 }])).catch(e => e);
+    http.expectOne(`${base}/pedido`).flush({ erro: 'corpo grande' }, { status: 413, statusText: 'x' });
+    expect(await p).toEqual({ tipo: 'itens', mensagem: 'corpo grande', itens: [] });
+  });
+
   it('status 0 vira rede', async () => {
     const p = firstValueFrom(service.carregar('tok')).catch(e => e);
     http.expectOne(base).error(new ProgressEvent('error'));

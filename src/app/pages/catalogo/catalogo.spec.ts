@@ -1,6 +1,6 @@
 import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { ActivatedRoute, convertToParamMap, Router } from '@angular/router';
-import { of, throwError } from 'rxjs';
+import { of, Subject, throwError } from 'rxjs';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { CatalogoComponent } from './catalogo';
 import { CatalogoService } from '../../services/catalogo.service';
@@ -80,13 +80,37 @@ describe('CatalogoComponent', () => {
 
   it('envia só uma vez e navega para enviado', async () => {
     await montar();
-    service.enviarPedido.mockReturnValue(of({ pedido: 42, total: 60 }));
+    const envio = new Subject<{ pedido: number; total: number }>();
+    service.enviarPedido.mockReturnValue(envio);
     c.definirQuantidade(c.produtos[0], 2);
     c.enviar();
-    c.enviar(); // duplo clique
+    c.enviar(); // duplo clique com a requisição em voo
     expect(service.enviarPedido).toHaveBeenCalledTimes(1);
+    envio.next({ pedido: 42, total: 60 });
+    envio.complete();
     expect(service.enviarPedido).toHaveBeenCalledWith('tok', [{ id: 1, quantidade: 2 }]);
     expect(router.navigate).toHaveBeenCalledWith(['/c', 'tok', 'enviado']);
+  });
+
+  it('422 no envio preenche erro do item e erroEnvio', async () => {
+    await montar();
+    service.enviarPedido.mockReturnValue(
+      throwError(() => ({ tipo: 'itens', mensagem: 'Itens com problema', itens: [{ id: 1, erro: 'sem estoque' }] }))
+    );
+    c.definirQuantidade(c.produtos[0], 2);
+    c.enviar();
+    expect(c.errosItens[1]).toBe('sem estoque');
+    expect(c.erroEnvio).toBe('Itens com problema');
+    expect(c.enviando).toBe(false);
+  });
+
+  it('409 no envio não esconde o catálogo', async () => {
+    await montar();
+    service.enviarPedido.mockReturnValue(throwError(() => ({ tipo: 'indisponivel', mensagem: 'Distribuidora indisponível.' })));
+    c.definirQuantidade(c.produtos[0], 2);
+    c.enviar();
+    expect(c.erroCarregamento).toBe('');
+    expect(c.erroEnvio).toContain('Distribuidora indisponível.');
   });
 
   it('link inválido navega para a página de link inválido', async () => {

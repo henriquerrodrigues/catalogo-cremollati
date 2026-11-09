@@ -95,7 +95,7 @@
             <p class="mt-2 text-xs text-slate-500">Embalagem: {{ produto.unidade }}</p>
             <p class="mt-2 inline-block rounded-full px-2 py-0.5 text-xs font-semibold"
                [ngClass]="produto.saldo >= 1 ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'">
-              {{ produto.saldo >= 1 ? ('Disponível: ' + produto.saldo + ' ' + produto.unidade) : 'Sob reserva' }}
+              {{ produto.saldo >= 1 ? ('Disponível: ' + (produto.saldo | number:'1.0-0') + ' ' + produto.unidade) : 'Sob reserva' }}
             </p>
           </div>
         </div>
@@ -198,6 +198,7 @@
             <p *ngIf="divisao(item).reserva > 0" class="text-xs text-amber-700">
               {{ divisao(item).agora }} agora · {{ divisao(item).reserva }} sob reserva
             </p>
+            <p *ngIf="errosItens[item.id]" class="text-xs text-red-700">{{ errosItens[item.id] }}</p>
             <div class="mt-1 inline-flex items-center rounded-lg border border-slate-300 overflow-hidden">
               <button (click)="decrementar(item)" class="w-8 h-8 hover:bg-slate-100" [attr.aria-label]="'Diminuir ' + item.nome">−</button>
               <span class="w-8 text-center text-sm font-semibold">{{ item.quantidade }}</span>
@@ -215,7 +216,8 @@
         <p *ngIf="temReserva" class="rounded-lg bg-amber-50 p-3 text-xs text-amber-800">
           Itens sob reserva viram um pedido separado e são entregues quando o estoque da distribuidora chegar.
         </p>
-        <p class="text-[11px] text-slate-400">Disponibilidade conferida na confirmação.</p>
+        <p class="text-[11px] text-slate-500">Disponibilidade conferida na confirmação.</p>
+        <p *ngIf="erroEnvio" class="rounded-lg bg-red-50 p-3 text-xs text-red-700" role="alert">{{ erroEnvio }}</p>
         <div class="flex justify-between items-baseline">
           <span class="text-sm text-slate-600">Total do pedido</span>
           <span class="text-2xl font-extrabold">{{ valorTotalCarrinho | currency:'BRL':'symbol':'1.2-2' }}</span>
