@@ -1,73 +1,58 @@
 import { TestBed } from '@angular/core/testing';
 import { provideHttpClient } from '@angular/common/http';
 import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { firstValueFrom } from 'rxjs';
 import { CatalogoService } from './catalogo.service';
+import { environment } from '../../environments/environment';
 
 describe('CatalogoService', () => {
   let service: CatalogoService;
-  let httpTesting: HttpTestingController;
+  let http: HttpTestingController;
+  const base = `${environment.apiUrl}/integracao/catalogo/tok`;
 
   beforeEach(() => {
-    TestBed.configureTestingModule({
-      providers: [provideHttpClient(), provideHttpClientTesting()]
-    });
-
+    TestBed.configureTestingModule({ providers: [provideHttpClient(), provideHttpClientTesting()] });
     service = TestBed.inject(CatalogoService);
-    httpTesting = TestBed.inject(HttpTestingController);
+    http = TestBed.inject(HttpTestingController);
   });
 
-  afterEach(() => httpTesting.verify());
+  afterEach(() => http.verify());
 
-  it('busca os produtos na API e inicializa a quantidade local', () => {
-    const produto = {
-      prO_CODIGO: 1,
-      prO_SKU: 'SORV-001',
-      prO_NOME: 'Sorvete de chocolate',
-      prO_PRECO: 25.5,
-      prO_ESTOQUE_ATUAL: 20,
-      prO_SALDO_VIRTUAL: 20,
-      prO_ESTOQUE_MINIMO: 3,
-      prO_CRIADO_EM: '2026-01-01T10:00:00',
-      prO_ATUALIZADO_EM: '2026-01-01T10:00:00',
-      prO_SITUACAO: 'A',
-      prO_TIPO: 'Produto',
-      prO_PRODUTO_PAI: 0,
-      prO_CATEGORIA_CODIGO: 1,
-      prO_CATEGORIA_NOME: 'Sorvetes',
-      prO_DESCRICAO_CURTA: 'Sorvete cremoso',
-      prO_UNIDADE: 'Pote 2L',
-      prO_VISIVEL_CARDAPIO: 1,
-      prO_ESTOQUE_SINCRONIZADO_EM: '2026-01-01T10:00:00',
-      prO_MIDIA_SINCRONIZADA_EM: '2026-01-01T10:00:00'
-    };
+  it('carrega o catálogo do token', async () => {
+    const p = firstValueFrom(service.carregar('tok'));
+    http.expectOne(base).flush({ cliente: { nome: 'X' }, distribuidora: { nome: 'D' }, pedidoMinimo: 300, itens: [], carrinho: [] });
+    expect((await p).distribuidora.nome).toBe('D');
+  });
 
-    service.listarProdutos().subscribe(produtos => {
-      expect(produtos).toEqual([{
-        PRO_CODIGO: produto.prO_CODIGO,
-        PRO_SKU: produto.prO_SKU,
-        PRO_NOME: produto.prO_NOME,
-        PRO_PRECO: produto.prO_PRECO,
-        PRO_ESTOQUE_ATUAL: produto.prO_ESTOQUE_ATUAL,
-        PRO_SALDO_VIRTUAL: produto.prO_SALDO_VIRTUAL,
-        PRO_ESTOQUE_MINIMO: produto.prO_ESTOQUE_MINIMO,
-        PRO_CRIADO_EM: produto.prO_CRIADO_EM,
-        PRO_ATUALIZADO_EM: produto.prO_ATUALIZADO_EM,
-        PRO_SITUACAO: produto.prO_SITUACAO,
-        PRO_TIPO: produto.prO_TIPO,
-        PRO_PRODUTO_PAI: produto.prO_PRODUTO_PAI,
-        PRO_CATEGORIA_CODIGO: produto.prO_CATEGORIA_CODIGO,
-        PRO_CATEGORIA_NOME: produto.prO_CATEGORIA_NOME,
-        PRO_DESCRICAO_CURTA: produto.prO_DESCRICAO_CURTA,
-        PRO_UNIDADE: produto.prO_UNIDADE,
-        PRO_VISIVEL_CARDAPIO: produto.prO_VISIVEL_CARDAPIO,
-        PRO_ESTOQUE_SINCRONIZADO_EM: produto.prO_ESTOQUE_SINCRONIZADO_EM,
-        PRO_MIDIA_SINCRONIZADA_EM: produto.prO_MIDIA_SINCRONIZADA_EM,
-        quantidade: 0
-      }]);
-    });
+  it.each([404, 410])('%s vira link-invalido', async status => {
+    const p = firstValueFrom(service.carregar('tok')).catch(e => e);
+    http.expectOne(base).flush({ erro: 'x' }, { status, statusText: 'x' });
+    expect(await p).toEqual({ tipo: 'link-invalido' });
+  });
 
-    const request = httpTesting.expectOne('http://localhost:5017/api/Catalogo');
-    expect(request.request.method).toBe('GET');
-    request.flush([produto]);
+  it('409 vira indisponivel com a mensagem da API', async () => {
+    const p = firstValueFrom(service.carregar('tok')).catch(e => e);
+    http.expectOne(base).flush({ erro: 'distribuidora indisponível' }, { status: 409, statusText: 'x' });
+    expect(await p).toEqual({ tipo: 'indisponivel', mensagem: 'distribuidora indisponível' });
+  });
+
+  it('envia o pedido e trata 422 por item', async () => {
+    const ok = firstValueFrom(service.enviarPedido('tok', [{ id: 1, quantidade: 2 }]));
+    const req = http.expectOne(`${base}/pedido`);
+    expect(req.request.method).toBe('POST');
+    expect(req.request.body).toEqual({ itens: [{ id: 1, quantidade: 2 }] });
+    req.flush({ pedido: 42, total: 10 });
+    expect((await ok).pedido).toBe(42);
+
+    const falha = firstValueFrom(service.enviarPedido('tok', [])).catch(e => e);
+    http.expectOne(`${base}/pedido`).flush({ erro: 'pedido sem itens', itens: [{ id: 0, erro: 'pedido sem itens' }] }, { status: 422, statusText: 'x' });
+    expect(await falha).toEqual({ tipo: 'itens', mensagem: 'pedido sem itens', itens: [{ id: 0, erro: 'pedido sem itens' }] });
+  });
+
+  it('status 0 vira rede', async () => {
+    const p = firstValueFrom(service.carregar('tok')).catch(e => e);
+    http.expectOne(base).error(new ProgressEvent('error'));
+    expect(await p).toEqual({ tipo: 'rede' });
   });
 });
