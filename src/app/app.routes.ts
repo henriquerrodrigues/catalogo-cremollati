@@ -1,23 +1,12 @@
 import { Routes } from '@angular/router';
 import { CatalogoComponent } from './pages/catalogo/catalogo';
+import { EnviadoComponent } from './pages/enviado/enviado';
+import { LinkInvalidoComponent } from './pages/link-invalido/link-invalido';
 
 export const routes: Routes = [
-  // Redireciona a raiz para o catálogo (opcional)
-  { 
-    path: '', 
-    redirectTo: 'catalogo', 
-    pathMatch: 'full' 
-  },
-  
-  // Rota para acessar o catálogo
-  { 
-    path: 'catalogo', 
-    component: CatalogoComponent 
-  },
-  
-  // Rota coringa para caso digitem algo errado (opcional)
-  { 
-    path: '**', 
-    redirectTo: 'catalogo' 
-  }
+  { path: 'c/:token', component: CatalogoComponent },
+  { path: 'c/:token/enviado', component: EnviadoComponent },
+  { path: 'link-invalido', component: LinkInvalidoComponent },
+  { path: '', redirectTo: '/link-invalido', pathMatch: 'full' },
+  { path: '**', redirectTo: '/link-invalido' }
 ];
