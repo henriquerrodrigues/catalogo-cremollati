@@ -1,4 +1,4 @@
-import { Component, HostListener, inject, OnInit } from '@angular/core';
+import { ChangeDetectorRef, Component, HostListener, inject, OnInit } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { ActivatedRoute, Router } from '@angular/router';
@@ -44,6 +44,8 @@ export class CatalogoComponent implements OnInit {
   carrinhoAberto = false;
   aviso = '';
   private avisoTimer?: ReturnType<typeof setTimeout>;
+  // App zoneless: callbacks assíncronos (HTTP, timer) precisam pedir nova renderização.
+  private readonly cdr = inject(ChangeDetectorRef);
 
   private get storageKey(): string {
     return `catalogo:pedido:${this.token.slice(0, 12)}`;
@@ -73,10 +75,12 @@ export class CatalogoComponent implements OnInit {
           this.restaurarPedido();
         }
         this.carregando = false;
+        this.cdr.markForCheck();
       },
       error: (e: ErroCatalogo) => {
         this.carregando = false;
         this.tratarErro(e, true);
+        this.cdr.markForCheck();
       }
     });
   }
@@ -221,6 +225,7 @@ export class CatalogoComponent implements OnInit {
       error: (e: ErroCatalogo) => {
         this.enviando = false;
         this.tratarErro(e, false);
+        this.cdr.markForCheck();
       }
     });
   }
@@ -283,7 +288,10 @@ export class CatalogoComponent implements OnInit {
   private mostrarAviso(msg: string): void {
     this.aviso = msg;
     clearTimeout(this.avisoTimer);
-    this.avisoTimer = setTimeout(() => (this.aviso = ''), 4000);
+    this.avisoTimer = setTimeout(() => {
+      this.aviso = '';
+      this.cdr.markForCheck();
+    }, 4000);
   }
 
   private normalizar(texto: string): string {
