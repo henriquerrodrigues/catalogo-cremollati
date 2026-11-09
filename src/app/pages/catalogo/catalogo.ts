@@ -115,6 +115,10 @@ export class CatalogoComponent implements OnInit {
     return dividirReserva(p.quantidade, p.saldo);
   }
 
+  saldoInteiro(p: ProdutoCarrinho): number {
+    return Math.floor(Math.max(0, p.saldo));
+  }
+
   get temReserva(): boolean {
     return this.itensCarrinho.some(p => this.divisao(p).reserva > 0);
   }

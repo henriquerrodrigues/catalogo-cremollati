@@ -95,7 +95,7 @@
             <p class="mt-2 text-xs text-slate-500">Embalagem: {{ produto.unidade }}</p>
             <p class="mt-2 inline-block rounded-full px-2 py-0.5 text-xs font-semibold"
                [ngClass]="produto.saldo >= 1 ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'">
-              {{ produto.saldo >= 1 ? ('Disponível: ' + (produto.saldo | number:'1.0-0') + ' ' + produto.unidade) : 'Sob reserva' }}
+              {{ produto.saldo >= 1 ? ('Disponível: ' + saldoInteiro(produto) + ' ' + produto.unidade) : 'Sob reserva' }}
             </p>
           </div>
         </div>

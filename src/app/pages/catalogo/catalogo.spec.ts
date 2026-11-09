@@ -113,6 +113,12 @@ describe('CatalogoComponent', () => {
     expect(c.erroEnvio).toContain('Distribuidora indisponível.');
   });
 
+  it('saldoInteiro arredonda para baixo', async () => {
+    await montar();
+    expect(c.saldoInteiro({ ...c.produtos[0], saldo: 2.7 })).toBe(2);
+    expect(c.saldoInteiro({ ...c.produtos[0], saldo: -3 })).toBe(0);
+  });
+
   it('link inválido navega para a página de link inválido', async () => {
     await montar('erro410');
     expect(router.navigate).toHaveBeenCalledWith(['/link-invalido']);
